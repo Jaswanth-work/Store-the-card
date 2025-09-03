@@ -1,4 +1,4 @@
-<!DOCTYPE html1>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -48,8 +48,33 @@
 </head>
 <body class="min-h-screen flex flex-col items-center p-4">
     <div id="app" class="container">
+        <!-- Login View -->
+        <div id="loginView" class="w-full h-full flex flex-col items-center justify-center text-center">
+            <header class="my-8">
+                <h1 class="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600">
+                    Login to Business Card Scanner
+                </h1>
+                <p class="text-gray-400 mt-2">Sign in with your phone number to get started.</p>
+            </header>
+            <div class="glass-card p-8 rounded-xl w-full max-w-sm">
+                <div id="phoneInputContainer" class="space-y-4">
+                    <input id="phoneNumberInput" type="tel" class="rounded-md p-3 w-full text-black placeholder-gray-400" placeholder="e.g., +1234567890">
+                    <button id="sendOtpBtn" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">
+                        Send OTP
+                    </button>
+                </div>
+                <div id="otpInputContainer" class="hidden space-y-4">
+                    <input id="otpInput" type="number" class="rounded-md p-3 w-full text-black placeholder-gray-400" placeholder="Enter OTP">
+                    <button id="verifyOtpBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-colors">
+                        Verify OTP
+                    </button>
+                </div>
+                <div id="recaptcha-container" class="mt-4 flex justify-center"></div>
+            </div>
+        </div>
+
         <!-- Main Dashboard View -->
-        <div id="dashboardView" class="w-full">
+        <div id="dashboardView" class="hidden w-full">
             <header class="text-center my-8">
                 <h1 class="text-4xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-600">
                     Business Card Scanner
@@ -160,7 +185,7 @@
     <script type="module">
         // Import Firebase libraries from CDN
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, RecaptchaVerifier, signInWithPhoneNumber } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, onSnapshot, query, addDoc, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global variables provided by the canvas environment
@@ -169,6 +194,7 @@
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // UI Elements
+        const loginView = document.getElementById('loginView');
         const dashboardView = document.getElementById('dashboardView');
         const scanView = document.getElementById('scanView');
         const favoritesView = document.getElementById('favoritesView');
@@ -194,12 +220,21 @@
         const saveCardBtn = document.getElementById('saveCardBtn');
         const cancelScanBtn = document.getElementById('cancelScanBtn');
         const messageBox = document.getElementById('messageBox');
+        
+        // Login UI elements
+        const phoneNumberInput = document.getElementById('phoneNumberInput');
+        const sendOtpBtn = document.getElementById('sendOtpBtn');
+        const otpInput = document.getElementById('otpInput');
+        const verifyOtpBtn = document.getElementById('verifyOtpBtn');
+        const phoneInputContainer = document.getElementById('phoneInputContainer');
+        const otpInputContainer = document.getElementById('otpInputContainer');
 
         // State variables
-        let db, auth, userId;
+        let db, auth, userId, confirmationResult;
         let extractedCardData = {};
         let allScannedCards = [];
         const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=';
+        let recaptchaVerifier;
 
         // --- Firebase Initialization and Auth ---
         async function initializeFirebase() {
@@ -207,21 +242,17 @@
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
-
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-                auth.onAuthStateChanged(user => {
+                
+                // Listen for auth state changes to determine which view to show
+                onAuthStateChanged(auth, user => {
                     if (user) {
                         userId = user.uid;
                         userIdDisplay.textContent = userId;
+                        setView('dashboard');
                         setupFirestoreListeners(userId);
                     } else {
-                        console.error("No user is authenticated.");
-                        showMessage('Authentication failed.', 'error');
+                        // No user is signed in, show login view
+                        setView('login');
                     }
                 });
             } catch (error) {
@@ -246,12 +277,15 @@
 
         // --- View Switching Logic ---
         function setView(view) {
+            loginView.classList.add('hidden');
             dashboardView.classList.add('hidden');
             scanView.classList.add('hidden');
             favoritesView.classList.add('hidden');
             foldersView.classList.add('hidden');
-            
-            if (view === 'dashboard') {
+
+            if (view === 'login') {
+                loginView.classList.remove('hidden');
+            } else if (view === 'dashboard') {
                 dashboardView.classList.remove('hidden');
             } else if (view === 'scan') {
                 scanView.classList.remove('hidden');
@@ -551,10 +585,51 @@
             }, 3000);
         }
 
+        // --- Phone Auth Logic ---
+        sendOtpBtn.addEventListener('click', async () => {
+            const phoneNumber = phoneNumberInput.value;
+            if (phoneNumber) {
+                try {
+                    // Initialize reCAPTCHA verifier for phone auth
+                    const recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+                        'size': 'invisible',
+                        'callback': (response) => {
+                            // reCAPTCHA solved, allows the OTP to be sent
+                            // You can optionally do something here
+                        }
+                    });
+                    
+                    confirmationResult = await signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier);
+                    showMessage('OTP sent successfully!', 'success');
+                    phoneInputContainer.classList.add('hidden');
+                    otpInputContainer.classList.remove('hidden');
+                } catch (error) {
+                    console.error("Error sending OTP:", error);
+                    showMessage('Failed to send OTP. Please try again.', 'error');
+                }
+            } else {
+                showMessage('Please enter a valid phone number.', 'error');
+            }
+        });
+
+        verifyOtpBtn.addEventListener('click', async () => {
+            const otp = otpInput.value;
+            if (otp) {
+                try {
+                    await confirmationResult.confirm(otp);
+                    // onAuthStateChanged will handle the view transition
+                } catch (error) {
+                    console.error("Error verifying OTP:", error);
+                    showMessage('Invalid OTP. Please try again.', 'error');
+                }
+            } else {
+                showMessage('Please enter the OTP.', 'error');
+            }
+        });
+
         // --- Initial Call ---
         initializeFirebase();
         
     </script>
 </body>
 </html>
-
