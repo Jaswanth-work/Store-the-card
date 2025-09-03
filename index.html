@@ -234,7 +234,6 @@
         let extractedCardData = {};
         let allScannedCards = [];
         const API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=';
-        let recaptchaVerifier;
 
         // --- Firebase Initialization and Auth ---
         async function initializeFirebase() {
@@ -242,7 +241,7 @@
                 const app = initializeApp(firebaseConfig);
                 auth = getAuth(app);
                 db = getFirestore(app);
-                
+
                 // Listen for auth state changes to determine which view to show
                 onAuthStateChanged(auth, user => {
                     if (user) {
@@ -591,14 +590,14 @@
             if (phoneNumber) {
                 try {
                     // Initialize reCAPTCHA verifier for phone auth
-                    const recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
+                    recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container', {
                         'size': 'invisible',
                         'callback': (response) => {
                             // reCAPTCHA solved, allows the OTP to be sent
                             // You can optionally do something here
                         }
                     });
-                    
+
                     confirmationResult = await signInWithPhoneNumber(auth, phoneNumber, recaptchaVerifier);
                     showMessage('OTP sent successfully!', 'success');
                     phoneInputContainer.classList.add('hidden');
